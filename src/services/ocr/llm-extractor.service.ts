@@ -1,12 +1,19 @@
 import { ocrConfig } from '../../config/ocr.config';
 import { DatosCV } from '../../types/cv.types';
 
-const PROMPT = `Eres un extractor de datos de CVs. Del siguiente texto, extrae SOLO estos campos en JSON:
-- universidad: nombre de la universidad donde estudió (o null si no se menciona)
-- profesion: profesión o título obtenido (o null)
-- fechaTitulo: fecha de emisión del título en formato YYYY-MM-DD (o null)
+const PROMPT = `Eres un extractor de datos de CVs. Analiza el texto y devuelve un JSON con EXACTAMENTE estos tres campos:
 
-Responde únicamente con el JSON, sin explicaciones.
+- "universidad": string con el nombre de la universidad, o null si no aparece.
+- "profesion": string con la profesión o grado (ej: "Bachiller en Ingeniería de Sistemas"), o null si no aparece.
+- "fechaTitulo": string en formato "YYYY-MM-DD" SOLO si el texto menciona explícitamente una fecha asociada al título o grado. Si el texto solo menciona un año (ej: "2026"), devuelve "2026-01-01". Si el texto NO menciona ninguna fecha asociada al título, devuelve null. NO inventes fechas.
+
+REGLAS ESTRICTAS:
+1. Si no estás seguro de un campo, devuelve null. NUNCA inventes datos.
+2. Si el texto dice "Bachiller en X" pero no menciona cuándo, "fechaTitulo" debe ser null.
+3. Responde SOLO con el JSON, sin texto adicional.
+
+Ejemplo de respuesta válida:
+{"universidad": "Universidad de Huánuco", "profesion": "Bachiller en Ing. de Sistemas", "fechaTitulo": null}
 
 Texto del CV:
 `;
@@ -17,7 +24,6 @@ interface LlmRawResponse {
   fechaTitulo: string | null;
 }
 
-// Llama a Ollama (API compatible con OpenAI)
 const llamarOllama = async (texto: string): Promise<LlmRawResponse> => {
   const response = await fetch(`${ocrConfig.ollamaBaseUrl}/api/generate`, {
     method: 'POST',
@@ -35,7 +41,6 @@ const llamarOllama = async (texto: string): Promise<LlmRawResponse> => {
   return JSON.parse(data.response);
 };
 
-// Llama a OpenAI (u otro compatible con OpenAI API)
 const llamarOpenAI = async (texto: string): Promise<LlmRawResponse> => {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -59,7 +64,28 @@ const llamarOpenAI = async (texto: string): Promise<LlmRawResponse> => {
   return JSON.parse(data.choices[0].message.content);
 };
 
-// Extrae datos con LLM. Devuelve null si el modo es 'rules' o si falla.
+// ============================================
+// VALIDACIÓN DE FECHAS DEVUELTAS POR EL LLM
+// ============================================
+// Si el LLM devuelve una fecha pero el texto NO contiene ese año,
+// la descartamos (el modelo alucinó).
+const validarFechaLLM = (fechaLlm: string | null, texto: string): string | null => {
+  if (!fechaLlm) return null;
+
+  const anioMatch = fechaLlm.match(/^(\d{4})/);
+  if (!anioMatch) return null;
+
+  const anio = anioMatch[1];
+  if (texto.includes(anio)) {
+    return fechaLlm;
+  }
+
+  return null;
+};
+
+// ============================================
+// EXTRACCIÓN CON LLM
+// ============================================
 export const extraerConLLM = async (texto: string): Promise<DatosCV | null> => {
   if (ocrConfig.isRulesOnly) return null;
 
@@ -74,10 +100,13 @@ export const extraerConLLM = async (texto: string): Promise<DatosCV | null> => {
       return null;
     }
 
+    // Validación: descartar fechas inventadas por el modelo
+    const fechaValidada = validarFechaLLM(resultado.fechaTitulo, texto);
+
     return {
       universidad: resultado.universidad || null,
       profesion: resultado.profesion || null,
-      fechaTitulo: resultado.fechaTitulo || null,
+      fechaTitulo: fechaValidada,
     };
   } catch (error) {
     console.warn('⚠️ LLM falló, se usan solo reglas:', error);
