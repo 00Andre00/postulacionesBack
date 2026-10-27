@@ -1,49 +1,118 @@
+import Fuse from 'fuse.js';
 import { DatosCV } from '../../types/cv.types';
 
-// Lista de universidades comunes (ampliable)
+// ============================================
+// LISTAS DE REFERENCIA
+// ============================================
 const UNIVERSIDADES = [
-  'Universidad Nacional Mayor de San Marcos',
-  'Universidad Nacional de Ingeniería',
-  'Universidad Nacional de San Agustín',
-  'Universidad Nacional de Trujillo',
+  // Las 9 más destacadas (QS Latinoamérica 2025)
   'Pontificia Universidad Católica del Perú',
-  'Universidad de Lima',
-  'Universidad del Pacífico',
+  'Universidad Nacional Mayor de San Marcos',
   'Universidad Peruana Cayetano Heredia',
-  'Universidad Nacional Federico Villarreal',
-  'Universidad Tecnológica del Perú',
-  'Universidad César Vallejo',
+  'Universidad del Pacífico',
+  'Universidad de Lima',
+  'Universidad Peruana de Ciencias Aplicadas',
+  'Universidad Nacional de Ingeniería',
+  'Universidad Nacional Agraria La Molina',
   'Universidad San Ignacio de Loyola',
-  'Universidad ESAN',
-  // siglas
-  'UNMSM', 'UNI', 'UNSA', 'UNT', 'PUCP', 'ULima', 'UP', 'UPCH', 'UNFV', 'UTP', 'UCV', 'USIL',
+  // Universidad de Huánuco
+  'Universidad de Huánuco',
+  'UDH',
+  // Siglas
+  'PUCP',
+  'UNMSM',
+  'UPCH',
+  'UPC',
+  'UNI',
+  'UNALM',
+  'USIL',
 ];
 
-// Profesiones comunes
 const PROFESIONES = [
+  // Ingenierías (nombre completo)
   'Ingeniero de Sistemas', 'Ingeniero de Software', 'Ingeniero Informático',
   'Ingeniero Industrial', 'Ingeniero Civil', 'Ingeniero Mecánico',
   'Ingeniero Electrónico', 'Ingeniero Eléctrico', 'Ingeniero Químico',
+  // Otras profesiones
   'Administrador', 'Contador', 'Economista', 'Abogado', 'Psicólogo',
   'Arquitecto', 'Médico', 'Enfermero', 'Comunicador', 'Periodista',
   'Diseñador Gráfico', 'Licenciado en Administración', 'Licenciado en Economía',
+  // Grados académicos con nombre completo
   'Bachiller en Ingeniería', 'Bachiller en Administración',
+  // Variantes con abreviaturas (muy comunes en CVs peruanos)
+  'Bachiller en Ing. de Sistemas',
+  'Bachiller en Ingeniería de Sistemas',
+  'Bachiller en Ing. Informática',
+  'Bachiller en Ingeniería Informática',
+  'Bachiller en Ing. de Software',
+  'Bachiller en Ingeniería de Software',
+  'Bachiller en Ing. Industrial',
+  'Bachiller en Ingeniería Industrial',
+  'Bachiller en Ing. Civil',
+  'Bachiller en Ingeniería Civil',
+  'Ing. de Sistemas',
+  'Ingeniería de Sistemas',
+  'Ing. Informática',
+  'Ingeniería Informática',
+  'Ing. de Software',
+  'Ingeniería de Software',
+  'Ing. Industrial',
+  'Ingeniería Industrial',
+  'Ing. Civil',
+  'Ingeniería Civil',
+  'Lic. en Administración',
+  'Licenciatura en Administración',
+  'Lic. en Economía',
+  'Licenciatura en Economía',
 ];
 
-// Busca el nombre más cercano a una palabra clave
-const buscarConocido = (texto: string, lista: string[]): string | null => {
+// ============================================
+// BÚSQUEDA DIFUSA CON FUSE
+// ============================================
+const fuseUniversidades = new Fuse(UNIVERSIDADES, {
+  threshold: 0.3,
+  includeScore: true,
+  ignoreLocation: true,
+});
+
+// ============================================
+// EXTRACCIÓN DE UNIVERSIDAD (Fuse)
+// ============================================
+const buscarUniversidad = (texto: string): string | null => {
+  let mejor: string | null = null;
+  let mejorScore = 1;
+
+  for (const uni of UNIVERSIDADES) {
+    const res = Fuse.match(uni, texto, { threshold: 0.3, ignoreLocation: true });
+    if (res && res.score < mejorScore) {
+      mejorScore = res.score;
+      mejor = uni;
+    }
+  }
+
+  return mejor;
+};
+
+// ============================================
+// EXTRACCIÓN DE PROFESIÓN
+// ============================================
+// Estrategia: buscar por longitud descendente para preferir el match más
+// específico ("Bachiller en Ing. de Sistemas" antes que "Ing. de Sistemas").
+const buscarProfesion = (texto: string): string | null => {
   const textoLower = texto.toLowerCase();
-  // Ordena por longitud descendente para preferir el match más específico
-  const ordenadas = [...lista].sort((a, b) => b.length - a.length);
-  for (const item of ordenadas) {
-    if (textoLower.includes(item.toLowerCase())) {
-      return item;
+  const ordenadas = [...PROFESIONES].sort((a, b) => b.length - a.length);
+
+  for (const profesion of ordenadas) {
+    if (textoLower.includes(profesion.toLowerCase())) {
+      return profesion;
     }
   }
   return null;
 };
 
-// Regex de fecha (múltiples formatos)
+// ============================================
+// EXTRACCIÓN DE FECHA
+// ============================================
 const PATRONES_FECHA = [
   // 2020-06-15, 2020/06/15
   /\b(19|20)\d{2}[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/,
@@ -51,6 +120,8 @@ const PATRONES_FECHA = [
   /\b(0?[1-9]|[12]\d|3[01])[-/](0?[1-9]|1[0-2])[-/](19|20)\d{2}\b/,
   // junio 2020, Jun 2020
   /\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+(19|20)\d{2}\b/i,
+  // Año suelto (fallback): 2026
+  /\b(19|20)\d{2}\b/,
 ];
 
 const buscarFecha = (texto: string): string | null => {
@@ -61,11 +132,16 @@ const buscarFecha = (texto: string): string | null => {
   return null;
 };
 
-// Normaliza fechas a YYYY-MM-DD cuando sea posible
+const MESES: Record<string, string> = {
+  enero: '01', febrero: '02', marzo: '03', abril: '04',
+  mayo: '05', junio: '06', julio: '07', agosto: '08',
+  septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12',
+};
+
 const normalizarFecha = (fecha: string | null): string | null => {
   if (!fecha) return null;
 
-  // ya está en formato YYYY-MM-DD o YYYY/MM/DD
+  // YYYY-MM-DD o YYYY/MM/DD
   const iso = fecha.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (iso) {
     const [, y, m, d] = iso;
@@ -79,33 +155,31 @@ const normalizarFecha = (fecha: string | null): string | null => {
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
 
-  // mes nombre año → devolver YYYY-MM-01
-  const nombres: Record<string, string> = {
-    enero: '01', febrero: '02', marzo: '03', abril: '04',
-    mayo: '05', junio: '06', julio: '07', agosto: '08',
-    septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12',
-  };
+  // "junio 2020" / "Jun 2020"
   const mesAnio = fecha.toLowerCase().match(/^([a-záéíóú]+)\s+(\d{4})$/);
-  if (mesAnio && nombres[mesAnio[1]]) {
-    return `${mesAnio[2]}-${nombres[mesAnio[1]]}-01`;
+  if (mesAnio && MESES[mesAnio[1]]) {
+    return `${mesAnio[2]}-${MESES[mesAnio[1]]}-01`;
+  }
+
+  // Solo año: 2026 → 2026-01-01
+  const soloAnio = fecha.match(/^(\d{4})$/);
+  if (soloAnio) {
+    return `${soloAnio[1]}-01-01`;
   }
 
   return null;
 };
 
-// Extrae datos por reglas
+// ============================================
+// EXTRACTOR PRINCIPAL
+// ============================================
 export const extraerConReglas = (texto: string): DatosCV => {
-  // Limita la búsqueda de universidad/profesión a las primeras ~3000 caracteres
-  // (donde suele estar "Educación / Formación académica")
+  // Limita la búsqueda a la cabecera donde suele estar "Formación académica"
   const cabecera = texto.slice(0, 3000);
 
-  const universidad = buscarConocido(cabecera, UNIVERSIDADES);
-  const profesion = buscarConocido(cabecera, PROFESIONES);
+  const universidad = buscarUniversidad(cabecera);
+  const profesion = buscarProfesion(cabecera);
   const fechaTitulo = normalizarFecha(buscarFecha(cabecera));
 
-  return {
-    universidad,
-    profesion,
-    fechaTitulo,
-  };
+  return { universidad, profesion, fechaTitulo };
 };
